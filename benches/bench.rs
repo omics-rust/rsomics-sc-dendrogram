@@ -16,7 +16,7 @@ fn make(g: usize, f: usize) -> GroupMeans {
 fn bench(c: &mut Criterion) {
     let gm = make(40, 2000);
     c.bench_function("dendrogram_40x2000_pearson_complete", |b| {
-        b.iter(|| compute(&gm, CorMethod::Pearson, Method::Complete))
+        b.iter(|| compute(&gm, CorMethod::Pearson, Method::Complete).unwrap())
     });
 }
 

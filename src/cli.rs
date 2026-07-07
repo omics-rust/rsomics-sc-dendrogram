@@ -53,7 +53,7 @@ impl Tool for Cli {
         })?;
 
         let gm = aggregate(&self.input)?;
-        let dendro = compute(&gm, cor, method);
+        let dendro = compute(&gm, cor, method)?;
 
         if let Some(path) = &self.linkage {
             let mut lf = std::fs::File::create(path).map_err(RsomicsError::Io)?;

@@ -37,7 +37,7 @@ fn matches_committed_golden() {
 
     for (name, case) in expected["cases"].as_object().unwrap() {
         let (cor, method) = parse_method(name);
-        let d = compute(&gm, cor, method);
+        let d = compute(&gm, cor, method).unwrap();
 
         let exp_link = case["linkage"].as_array().unwrap();
         assert_eq!(d.linkage.len(), exp_link.len(), "{name}: linkage rows");
@@ -65,6 +65,61 @@ fn matches_committed_golden() {
                 assert!(dc < 1e-9, "{name}: corr[{i}][{j}] diff {dc}");
             }
         }
+    }
+}
+
+// Non-finite correlation distances. scanpy's pipeline (groupby-mean → corr →
+// squareform → scipy.linkage) fails loud with
+// ValueError('The condensed distance matrix must contain only finite values.')
+// whenever a group's mean vector has zero variance (constant across features)
+// or the input has a single feature — both make the group's correlations NaN.
+// We mirror that ValueError instead of panicking on a corrupt distance matrix.
+const SCIPY_NONFINITE_MSG: &str = "The condensed distance matrix must contain only finite values.";
+
+#[test]
+fn zero_variance_group_errors_loud() {
+    // Group A's per-cell mean vector is [5,5,5] (constant) → NaN corr; scanpy raises.
+    let gm = aggregate(&golden_dir().join("zero_variance_group.tsv")).unwrap();
+    assert_eq!(gm.categories, ["A", "B", "C"]);
+    for cor in [CorMethod::Pearson, CorMethod::Spearman, CorMethod::Kendall] {
+        for m in [
+            Method::Single,
+            Method::Complete,
+            Method::Average,
+            Method::Weighted,
+            Method::Ward,
+            Method::Centroid,
+            Method::Median,
+        ] {
+            let err = compute(&gm, cor, m).unwrap_err();
+            assert!(
+                err.to_string().contains(SCIPY_NONFINITE_MSG),
+                "expected scipy non-finite error, got: {err}"
+            );
+        }
+    }
+}
+
+#[test]
+fn single_feature_errors_loud() {
+    // One feature column → correlation of scalars is NaN; scanpy raises.
+    let gm = aggregate(&golden_dir().join("single_feature.tsv")).unwrap();
+    let err = compute(&gm, CorMethod::Pearson, Method::Complete).unwrap_err();
+    assert!(
+        err.to_string().contains(SCIPY_NONFINITE_MSG),
+        "expected scipy non-finite error, got: {err}"
+    );
+}
+
+#[test]
+fn nonfinite_input_cell_rejected_at_parse() {
+    // Rust's f64::parse silently accepts "inf"/"nan"; we reject at read time.
+    for fixture in ["nonfinite_cell.tsv", "nan_cell.tsv"] {
+        let err = aggregate(&golden_dir().join(fixture)).unwrap_err();
+        assert!(
+            err.to_string().contains("non-finite value"),
+            "{fixture}: expected non-finite parse error, got: {err}"
+        );
     }
 }
 
@@ -99,7 +154,8 @@ fn matches_live_scanpy() {
                 &gm,
                 CorMethod::parse(cor).unwrap(),
                 Method::parse(link).unwrap(),
-            );
+            )
+            .unwrap();
 
             for (row, e) in d.linkage.iter().zip(exp["linkage"].as_array().unwrap()) {
                 let e = e.as_array().unwrap();

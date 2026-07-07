@@ -12,7 +12,7 @@ pub use corr::{CorMethod, condensed_distance, corr_matrix};
 pub use linkage::{Method, Node, leaf_order, linkage};
 
 /// One row of the scipy linkage matrix.
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct LinkageRow {
     pub left: usize,
     pub right: usize,
@@ -20,7 +20,7 @@ pub struct LinkageRow {
     pub size: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct Dendrogram {
     pub categories: Vec<String>,
     pub linkage: Vec<LinkageRow>,
@@ -32,6 +32,7 @@ pub struct Dendrogram {
 /// A cells×features representation with a per-cell group label. Group order is
 /// the sorted set of labels — pandas' default Categorical order, which scanpy's
 /// `.loc[categories]` reindex relies on.
+#[derive(Debug)]
 pub struct GroupMeans {
     pub categories: Vec<String>,
     /// One mean-vector per category, in `categories` order.
@@ -74,9 +75,16 @@ pub fn aggregate(input: &Path) -> Result<GroupMeans> {
             .entry(cells[0].to_string())
             .or_insert_with(|| (vec![0.0; n_features], 0));
         for (k, cell) in cells[1..].iter().enumerate() {
-            entry.0[k] += cell.parse::<f64>().map_err(|e| {
+            let v: f64 = cell.parse().map_err(|e| {
                 RsomicsError::InvalidInput(format!("line {lineno} col {}: {e}", k + 1))
             })?;
+            if !v.is_finite() {
+                return Err(RsomicsError::InvalidInput(format!(
+                    "line {lineno} col {}: non-finite value '{cell}'",
+                    k + 1
+                )));
+            }
+            entry.0[k] += v;
         }
         entry.1 += 1;
         Ok(())
@@ -113,10 +121,18 @@ pub fn aggregate(input: &Path) -> Result<GroupMeans> {
     Ok(GroupMeans { categories, means })
 }
 
-pub fn compute(gm: &GroupMeans, cor: CorMethod, method: Method) -> Dendrogram {
+/// Errors loudly (mirroring scipy's `linkage` ValueError) when the correlation
+/// distances are non-finite — a zero-variance group or single-feature input
+/// makes a group's correlations NaN, which would otherwise corrupt the linkage.
+pub fn compute(gm: &GroupMeans, cor: CorMethod, method: Method) -> Result<Dendrogram> {
     let g = gm.categories.len();
     let corr = corr_matrix(&gm.means, cor);
     let condensed = condensed_distance(&corr, g);
+    if condensed.iter().any(|d| !d.is_finite()) {
+        return Err(RsomicsError::InvalidInput(
+            "The condensed distance matrix must contain only finite values.".into(),
+        ));
+    }
     let z = linkage(&condensed, g, method);
     let leaves = leaf_order(&z, g);
 
@@ -132,13 +148,13 @@ pub fn compute(gm: &GroupMeans, cor: CorMethod, method: Method) -> Dendrogram {
         })
         .collect();
 
-    Dendrogram {
+    Ok(Dendrogram {
         categories: gm.categories.clone(),
         linkage,
         categories_ordered,
         categories_idx_ordered: leaves,
         correlation_matrix,
-    }
+    })
 }
 
 pub fn write_json(d: &Dendrogram, out: &mut dyn Write) -> Result<()> {
