@@ -1,6 +1,6 @@
 [package]
 name = "rsomics-sc-dendrogram"
-version = "0.1.1"
+version = "0.1.2"
 description = "Hierarchical clustering of single-cell groupby categories — scanpy sc.tl.dendrogram port (group-mean aggregation, correlation distance, scipy linkage + dendrogram leaf ordering)"
 edition = "2024"
 rust-version = "1.91"
